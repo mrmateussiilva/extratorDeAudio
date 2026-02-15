@@ -13,7 +13,12 @@ FROM alpine:latest AS whisper-builder
 RUN apk add --no-cache git cmake make g++ bash curl
 
 RUN git clone --depth=1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp
-RUN cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF
+RUN cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+    -DWHISPER_BUILD_EXAMPLES=ON \
+    -DWHISPER_BUILD_TESTS=OFF \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DWHISPER_BUILD_SHARED_LIB=OFF \
+    -DGGML_BUILD_SHARED=OFF
 RUN cmake --build /tmp/whisper.cpp/build --config Release -j$(nproc)
 RUN /tmp/whisper.cpp/models/download-ggml-model.sh base
 RUN mkdir -p /tmp/whisper-artifacts/bin /tmp/whisper-artifacts/lib && \
@@ -22,7 +27,8 @@ RUN mkdir -p /tmp/whisper-artifacts/bin /tmp/whisper-artifacts/lib && \
     else \
       cp /tmp/whisper.cpp/build/bin/main /tmp/whisper-artifacts/bin/whisper-cli; \
     fi && \
-    find /tmp/whisper.cpp/build -type f \( -name "libwhisper*.so*" -o -name "libggml*.so*" \) -exec cp {} /tmp/whisper-artifacts/lib/ \;
+    (cp -a /tmp/whisper.cpp/build/src/libwhisper*.so* /tmp/whisper-artifacts/lib/ 2>/dev/null || true) && \
+    (cp -a /tmp/whisper.cpp/build/ggml/src/libggml*.so* /tmp/whisper-artifacts/lib/ 2>/dev/null || true)
 
 FROM alpine:latest
 RUN apk add --no-cache ffmpeg ca-certificates tzdata libstdc++ wget
