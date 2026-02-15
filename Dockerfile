@@ -16,7 +16,13 @@ RUN git clone --depth=1 https://github.com/ggerganov/whisper.cpp.git /tmp/whispe
 RUN cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF
 RUN cmake --build /tmp/whisper.cpp/build --config Release -j$(nproc)
 RUN /tmp/whisper.cpp/models/download-ggml-model.sh base
-RUN if [ -f /tmp/whisper.cpp/build/bin/whisper-cli ]; then cp /tmp/whisper.cpp/build/bin/whisper-cli /tmp/whisper-cli; else cp /tmp/whisper.cpp/build/bin/main /tmp/whisper-cli; fi
+RUN mkdir -p /tmp/whisper-artifacts/bin /tmp/whisper-artifacts/lib && \
+    if [ -f /tmp/whisper.cpp/build/bin/whisper-cli ]; then \
+      cp /tmp/whisper.cpp/build/bin/whisper-cli /tmp/whisper-artifacts/bin/whisper-cli; \
+    else \
+      cp /tmp/whisper.cpp/build/bin/main /tmp/whisper-artifacts/bin/whisper-cli; \
+    fi && \
+    find /tmp/whisper.cpp/build -type f \( -name "libwhisper*.so*" -o -name "libggml*.so*" \) -exec cp {} /tmp/whisper-artifacts/lib/ \;
 
 FROM alpine:latest
 RUN apk add --no-cache ffmpeg ca-certificates tzdata libstdc++ wget
@@ -25,7 +31,8 @@ WORKDIR /app
 COPY --from=builder /bin/audio-extractor /app/audio-extractor
 COPY --from=builder /app/static /app/static
 COPY --from=builder /app/templates /app/templates
-COPY --from=whisper-builder /tmp/whisper-cli /app/whisper/whisper-cli
+COPY --from=whisper-builder /tmp/whisper-artifacts/bin/whisper-cli /app/whisper/whisper-cli
+COPY --from=whisper-builder /tmp/whisper-artifacts/lib/ /app/whisper/lib/
 COPY --from=whisper-builder /tmp/whisper.cpp/models/ggml-base.bin /app/whisper/models/ggml-base.bin
 
 RUN chmod +x /app/whisper/whisper-cli && mkdir -p /app/uploads /app/outputs
@@ -39,6 +46,7 @@ ENV MAX_UPLOAD_BYTES=524288000
 ENV WHISPER_BIN=/app/whisper/whisper-cli
 ENV WHISPER_MODEL=/app/whisper/models/ggml-base.bin
 ENV WHISPER_LANGUAGE=auto
+ENV LD_LIBRARY_PATH=/app/whisper/lib
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
