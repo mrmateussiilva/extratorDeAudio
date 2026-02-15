@@ -180,7 +180,7 @@ func UploadPage(job *models.ExtractionJob, recent []*models.ExtractionJob) templ
 				return templ_7745c5c3_Err
 			}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</section></main><div id=\"toast\" class=\"toast hidden\"></div><script src=\"/static/js/app.js\"></script></body></html>")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</section></main><div id=\"toast\" class=\"toast hidden\"></div><script src=\"/static/js/app.js?v=20260215-ux2\"></script></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

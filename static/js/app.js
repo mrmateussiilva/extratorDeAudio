@@ -73,20 +73,40 @@
       if (progressText && text) progressText.textContent = text;
     };
 
+    const showTranscriptionPendingCard = () => {
+      if (!resultSlot) return;
+      if (document.getElementById("transcription-pending-card")) return;
+      resultSlot.innerHTML += `
+        <div id="transcription-pending-card" class="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mt-3">
+          <p class="font-semibold text-cyan-300">Transcrição em andamento</p>
+          <p class="text-sm text-slate-300 mt-1">Processando áudio localmente com whisper.cpp...</p>
+        </div>
+      `;
+    };
+
     const startTranscription = async (button) => {
       if (button) button.disabled = true;
+      if (button) button.textContent = "Transcrevendo...";
+      showTranscriptionPendingCard();
+      updateProgress(2, "Transcrição em fila...");
       try {
         const response = await fetch(`/transcribe/${jobID}`, { method: "GET" });
         if (!response.ok) {
           const message = await response.text();
           showToast(message || "Falha ao iniciar transcrição", "error");
-          if (button) button.disabled = false;
+          if (button) {
+            button.disabled = false;
+            button.textContent = "Transcrever em texto";
+          }
           return;
         }
         showToast("Transcrição iniciada", "success");
       } catch {
         showToast("Não foi possível iniciar a transcrição", "error");
-        if (button) button.disabled = false;
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Transcrever em texto";
+        }
       }
     };
 
@@ -123,6 +143,8 @@
 
     const renderTranscriptActions = (txtURL, srtURL) => {
       if (!resultSlot || (!txtURL && !srtURL)) return;
+      const pending = document.getElementById("transcription-pending-card");
+      if (pending) pending.remove();
       resultSlot.innerHTML += `
         <div class="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mt-3">
           <p class="font-semibold text-cyan-300">Transcrição concluída</p>
@@ -184,6 +206,11 @@
 
     ws.onerror = () => {
       showToast("Conexão de progresso perdida", "error");
+    };
+
+    ws.onclose = () => {
+      // Mantém a UI informando que a conexão caiu para evitar sensação de inação.
+      showToast("Canal de progresso encerrado", "error");
     };
   };
 
