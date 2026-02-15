@@ -2,6 +2,7 @@ package extractor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,18 +11,33 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// ProgressCallback receives updates emitted by ffmpeg execution.
+// ProgressCallback receives updates emitted by execution.
 type ProgressCallback func(percent int, status, message string)
 
-// Service wraps ffmpeg/ffprobe operations.
+// Service wraps ffmpeg/ffprobe and whisper operations.
 type Service struct {
-	logger *slog.Logger
+	logger          *slog.Logger
+	whisperBin      string
+	whisperModel    string
+	whisperLanguage string
 }
 
-func NewService(logger *slog.Logger) *Service {
-	return &Service{logger: logger}
+func NewService(logger *slog.Logger, whisperBin, whisperModel, whisperLanguage string) *Service {
+	if whisperBin == "" {
+		whisperBin = "whisper-cli"
+	}
+	if whisperLanguage == "" {
+		whisperLanguage = "auto"
+	}
+	return &Service{
+		logger:          logger,
+		whisperBin:      whisperBin,
+		whisperModel:    whisperModel,
+		whisperLanguage: whisperLanguage,
+	}
 }
 
 // ExtractAudio runs ffmpeg and reports progress using callback.
@@ -120,6 +136,85 @@ func (s *Service) ExtractAudio(ctx context.Context, inputPath, outputPath, forma
 		cb(100, "completed", "extração concluída")
 	}
 	return nil
+}
+
+// TranscribeAudio runs local whisper.cpp (`whisper-cli`) and creates .txt and .srt files.
+func (s *Service) TranscribeAudio(ctx context.Context, inputAudioPath, outputBasePath string, cb ProgressCallback) error {
+	if s.whisperModel == "" {
+		return errors.New("whisper model is not configured")
+	}
+
+	if cb != nil {
+		cb(1, "processing", "iniciando transcrição")
+	}
+
+	args := []string{
+		"-m", s.whisperModel,
+		"-f", inputAudioPath,
+		"-of", outputBasePath,
+		"-otxt",
+		"-osrt",
+		"-l", s.whisperLanguage,
+	}
+
+	cmd := exec.CommandContext(ctx, s.whisperBin, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start whisper-cli: %w", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	progress := 5
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			return ctx.Err()
+		case err := <-done:
+			if err != nil {
+				logOut := strings.TrimSpace(stderr.String())
+				if logOut != "" {
+					return fmt.Errorf("whisper-cli failed: %s", compactLogLine(logOut))
+				}
+				return fmt.Errorf("whisper-cli failed: %w", err)
+			}
+			if cb != nil {
+				cb(100, "completed", "transcrição concluída")
+			}
+			return nil
+		case <-ticker.C:
+			if progress < 90 {
+				progress += 7
+			}
+			if cb != nil {
+				cb(progress, "processing", "transcrevendo áudio")
+			}
+		}
+	}
+}
+
+func compactLogLine(v string) string {
+	lines := strings.Split(v, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			if len(line) > 220 {
+				return line[:220] + "..."
+			}
+			return line
+		}
+	}
+	return "unknown whisper error"
 }
 
 func (s *Service) probeDuration(ctx context.Context, inputPath string) (float64, error) {

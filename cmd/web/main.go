@@ -22,8 +22,11 @@ func main() {
 	uploadsDir := envOrDefault("UPLOADS_DIR", "uploads")
 	outputsDir := envOrDefault("OUTPUTS_DIR", "outputs")
 	maxUploadBytes := envInt64OrDefault("MAX_UPLOAD_BYTES", 500*1024*1024)
+	whisperBin := envOrDefault("WHISPER_BIN", "whisper-cli")
+	whisperModel := envOrDefault("WHISPER_MODEL", "/app/whisper/models/ggml-base.bin")
+	whisperLanguage := envOrDefault("WHISPER_LANGUAGE", "auto")
 
-	app := handlers.NewApp(logger, uploadsDir, outputsDir, maxUploadBytes)
+	app := handlers.NewApp(logger, uploadsDir, outputsDir, maxUploadBytes, whisperBin, whisperModel, whisperLanguage)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

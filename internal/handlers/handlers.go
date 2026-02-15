@@ -47,7 +47,7 @@ type App struct {
 	upgrader websocket.Upgrader
 }
 
-func NewApp(logger *slog.Logger, uploadsDir, outputsDir string, maxUploadBytes int64) *App {
+func NewApp(logger *slog.Logger, uploadsDir, outputsDir string, maxUploadBytes int64, whisperBin, whisperModel, whisperLanguage string) *App {
 	if maxUploadBytes <= 0 {
 		maxUploadBytes = defaultMaxUploadBytes
 	}
@@ -55,7 +55,7 @@ func NewApp(logger *slog.Logger, uploadsDir, outputsDir string, maxUploadBytes i
 	app := &App{
 		logger:         logger,
 		router:         chi.NewRouter(),
-		extractor:      extractor.NewService(logger),
+		extractor:      extractor.NewService(logger, whisperBin, whisperModel, whisperLanguage),
 		uploadsDir:     uploadsDir,
 		outputsDir:     outputsDir,
 		maxUploadBytes: maxUploadBytes,
@@ -78,14 +78,16 @@ func (a *App) registerRoutes() {
 	a.router.Use(middleware.RequestID)
 	a.router.Use(middleware.RealIP)
 	a.router.Use(middleware.Recoverer)
-	a.router.Use(middleware.Timeout(30 * time.Minute))
+	a.router.Use(middleware.Timeout(45 * time.Minute))
 	a.router.Use(a.corsMiddleware)
 
 	a.router.Get("/", a.index)
 	a.router.Post("/upload", a.upload)
 	a.router.Get("/job/{id}", a.jobPage)
 	a.router.Get("/extract/{id}", a.startExtraction)
+	a.router.Get("/transcribe/{id}", a.startTranscription)
 	a.router.Get("/download/{id}", a.download)
+	a.router.Get("/transcript/{id}", a.downloadTranscript)
 	a.router.Get("/ws/{id}", a.jobWS)
 	a.router.Get("/healthz", a.health)
 
@@ -162,15 +164,17 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	job := &models.ExtractionJob{
-		ID:            jobID,
-		InputFileName: safeName,
-		InputPath:     inputPath,
-		Format:        format,
-		Quality:       quality,
-		Status:        models.StatusUploaded,
-		Progress:      0,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:                 jobID,
+		InputFileName:      safeName,
+		InputPath:          inputPath,
+		Format:             format,
+		Quality:            quality,
+		Status:             models.StatusUploaded,
+		Progress:           0,
+		TranscriptStatus:   models.StatusNotStarted,
+		TranscriptProgress: 0,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	a.mu.Lock()
@@ -201,13 +205,21 @@ func (a *App) startExtraction(w http.ResponseWriter, r *http.Request) {
 		a.respondJSON(w, http.StatusOK, map[string]string{"status": "already_completed", "download_url": "/download/" + job.ID})
 		return
 	}
+
 	job.Status = models.StatusQueued
 	job.Progress = 1
 	job.Error = ""
+	job.TranscriptStatus = models.StatusNotStarted
+	job.TranscriptProgress = 0
+	job.TranscriptError = ""
+	job.TranscriptTXTPath = ""
+	job.TranscriptTXTName = ""
+	job.TranscriptSRTPath = ""
+	job.TranscriptSRTName = ""
 	job.UpdatedAt = time.Now()
 	a.mu.Unlock()
 
-	a.broadcast(jobID, models.ProgressEvent{ID: jobID, Status: models.StatusQueued, Progress: 1, Message: "job em fila"})
+	a.broadcast(jobID, models.ProgressEvent{ID: jobID, Stage: "extraction", Status: models.StatusQueued, Progress: 1, Message: "job em fila"})
 	go a.runExtraction(jobID)
 	a.respondJSON(w, http.StatusAccepted, map[string]string{"status": "started", "job_id": jobID})
 }
@@ -245,7 +257,7 @@ func (a *App) runExtraction(jobID string) {
 			j.Progress = percent
 			j.UpdatedAt = time.Now()
 		})
-		a.broadcast(jobID, models.ProgressEvent{ID: jobID, Status: models.StatusProcessing, Progress: percent, Message: message})
+		a.broadcast(jobID, models.ProgressEvent{ID: jobID, Stage: "extraction", Status: models.StatusProcessing, Progress: percent, Message: message})
 	})
 
 	if err != nil {
@@ -261,13 +273,130 @@ func (a *App) runExtraction(jobID string) {
 	})
 	a.broadcast(jobID, models.ProgressEvent{
 		ID:          jobID,
+		Stage:       "extraction",
 		Status:      models.StatusCompleted,
 		Progress:    100,
-		Message:     "concluído",
+		Message:     "extração concluída",
 		DownloadURL: "/download/" + jobID,
 	})
 
 	a.logger.Info("extraction completed", "job_id", jobID, "output", outputPath)
+}
+
+func (a *App) startTranscription(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+
+	a.mu.Lock()
+	job, ok := a.jobs[jobID]
+	if !ok {
+		a.mu.Unlock()
+		http.Error(w, "job não encontrado", http.StatusNotFound)
+		return
+	}
+	if job.Status != models.StatusCompleted {
+		a.mu.Unlock()
+		http.Error(w, "extração ainda não foi concluída", http.StatusConflict)
+		return
+	}
+
+	switch job.TranscriptStatus {
+	case models.StatusQueued, models.StatusProcessing:
+		a.mu.Unlock()
+		a.respondJSON(w, http.StatusAccepted, map[string]string{"status": "transcription_already_processing"})
+		return
+	case models.StatusCompleted:
+		a.mu.Unlock()
+		a.respondJSON(w, http.StatusOK, map[string]string{
+			"status":             "transcription_already_completed",
+			"transcript_txt_url": "/transcript/" + jobID + "?format=txt",
+			"transcript_srt_url": "/transcript/" + jobID + "?format=srt",
+		})
+		return
+	}
+
+	job.TranscriptStatus = models.StatusQueued
+	job.TranscriptProgress = 1
+	job.TranscriptError = ""
+	job.UpdatedAt = time.Now()
+	a.mu.Unlock()
+
+	a.broadcast(jobID, models.ProgressEvent{ID: jobID, Stage: "transcription", Status: models.StatusQueued, Progress: 1, Message: "transcrição em fila"})
+	go a.runTranscription(jobID)
+
+	a.respondJSON(w, http.StatusAccepted, map[string]string{"status": "transcription_started", "job_id": jobID})
+}
+
+func (a *App) runTranscription(jobID string) {
+	job, ok := a.getJob(jobID)
+	if !ok {
+		return
+	}
+	if job.OutputPath == "" {
+		a.failTranscription(jobID, fmt.Errorf("arquivo de áudio não encontrado para transcrição"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	defer cancel()
+
+	base := filepath.Join(a.outputsDir, job.ID+"_transcript")
+	txtPath := base + ".txt"
+	srtPath := base + ".srt"
+
+	a.updateJob(jobID, func(j *models.ExtractionJob) {
+		j.TranscriptStatus = models.StatusProcessing
+		j.TranscriptProgress = 1
+		j.TranscriptError = ""
+		j.TranscriptTXTPath = txtPath
+		j.TranscriptTXTName = filepath.Base(txtPath)
+		j.TranscriptSRTPath = srtPath
+		j.TranscriptSRTName = filepath.Base(srtPath)
+		j.UpdatedAt = time.Now()
+	})
+
+	err := a.extractor.TranscribeAudio(ctx, job.OutputPath, base, func(percent int, status, message string) {
+		if percent < 1 {
+			percent = 1
+		}
+		a.updateJob(jobID, func(j *models.ExtractionJob) {
+			j.TranscriptStatus = models.StatusProcessing
+			j.TranscriptProgress = percent
+			j.UpdatedAt = time.Now()
+		})
+		a.broadcast(jobID, models.ProgressEvent{ID: jobID, Stage: "transcription", Status: models.StatusProcessing, Progress: percent, Message: message})
+	})
+
+	if err != nil {
+		a.failTranscription(jobID, err)
+		return
+	}
+
+	if _, err := os.Stat(txtPath); err != nil {
+		a.failTranscription(jobID, fmt.Errorf("transcrição TXT não foi gerada"))
+		return
+	}
+	if _, err := os.Stat(srtPath); err != nil {
+		a.failTranscription(jobID, fmt.Errorf("transcrição SRT não foi gerada"))
+		return
+	}
+
+	a.updateJob(jobID, func(j *models.ExtractionJob) {
+		j.TranscriptStatus = models.StatusCompleted
+		j.TranscriptProgress = 100
+		j.TranscriptError = ""
+		j.UpdatedAt = time.Now()
+	})
+
+	a.broadcast(jobID, models.ProgressEvent{
+		ID:               jobID,
+		Stage:            "transcription",
+		Status:           models.StatusCompleted,
+		Progress:         100,
+		Message:          "transcrição concluída",
+		TranscriptTXTURL: "/transcript/" + jobID + "?format=txt",
+		TranscriptSRTURL: "/transcript/" + jobID + "?format=srt",
+	})
+	a.logger.Info("transcription completed", "job_id", jobID)
 }
 
 func (a *App) failJob(jobID string, err error) {
@@ -277,7 +406,18 @@ func (a *App) failJob(jobID string, err error) {
 		j.Error = err.Error()
 		j.UpdatedAt = time.Now()
 	})
-	a.broadcast(jobID, models.ProgressEvent{ID: jobID, Status: models.StatusFailed, Progress: 0, Error: err.Error(), Message: "falha na extração"})
+	a.broadcast(jobID, models.ProgressEvent{ID: jobID, Stage: "extraction", Status: models.StatusFailed, Progress: 0, Error: err.Error(), Message: "falha na extração"})
+}
+
+func (a *App) failTranscription(jobID string, err error) {
+	a.logger.Error("transcription failed", "job_id", jobID, "error", err)
+	a.updateJob(jobID, func(j *models.ExtractionJob) {
+		j.TranscriptStatus = models.StatusFailed
+		j.TranscriptError = err.Error()
+		j.TranscriptProgress = 0
+		j.UpdatedAt = time.Now()
+	})
+	a.broadcast(jobID, models.ProgressEvent{ID: jobID, Stage: "transcription", Status: models.StatusFailed, Progress: 0, Error: err.Error(), Message: "falha na transcrição"})
 }
 
 func (a *App) download(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +437,39 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+job.OutputName+"\"")
 	http.ServeFile(w, r, job.OutputPath)
+}
+
+func (a *App) downloadTranscript(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+	job, ok := a.getJob(jobID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	if job.TranscriptStatus != models.StatusCompleted {
+		http.Error(w, "transcrição ainda não está pronta", http.StatusConflict)
+		return
+	}
+
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	path := job.TranscriptTXTPath
+	name := job.TranscriptTXTName
+	if format == "srt" {
+		path = job.TranscriptSRTPath
+		name = job.TranscriptSRTName
+	}
+	if path == "" {
+		http.Error(w, "arquivo de transcrição não encontrado", http.StatusNotFound)
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		http.Error(w, "arquivo de transcrição não encontrado", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	http.ServeFile(w, r, path)
 }
 
 func (a *App) jobWS(w http.ResponseWriter, r *http.Request) {
@@ -320,13 +493,7 @@ func (a *App) jobWS(w http.ResponseWriter, r *http.Request) {
 	a.subs[jobID][conn] = struct{}{}
 	a.mu.Unlock()
 
-	_ = conn.WriteJSON(models.ProgressEvent{
-		ID:          job.ID,
-		Status:      job.Status,
-		Progress:    job.Progress,
-		Error:       job.Error,
-		DownloadURL: downloadURLForJob(job),
-	})
+	_ = conn.WriteJSON(currentProgressEvent(job))
 
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
@@ -340,9 +507,45 @@ func (a *App) jobWS(w http.ResponseWriter, r *http.Request) {
 	_ = conn.Close()
 }
 
+func currentProgressEvent(job *models.ExtractionJob) models.ProgressEvent {
+	event := models.ProgressEvent{
+		ID:          job.ID,
+		Stage:       "extraction",
+		Status:      job.Status,
+		Progress:    job.Progress,
+		Error:       job.Error,
+		DownloadURL: downloadURLForJob(job),
+	}
+
+	if job.TranscriptStatus == models.StatusQueued || job.TranscriptStatus == models.StatusProcessing || job.TranscriptStatus == models.StatusCompleted || job.TranscriptStatus == models.StatusFailed {
+		event.Stage = "transcription"
+		event.Status = job.TranscriptStatus
+		event.Progress = job.TranscriptProgress
+		event.Error = job.TranscriptError
+		event.TranscriptTXTURL = transcriptTXTURLForJob(job)
+		event.TranscriptSRTURL = transcriptSRTURLForJob(job)
+	}
+
+	return event
+}
+
 func downloadURLForJob(job *models.ExtractionJob) string {
 	if job.Status == models.StatusCompleted {
 		return "/download/" + job.ID
+	}
+	return ""
+}
+
+func transcriptTXTURLForJob(job *models.ExtractionJob) string {
+	if job.TranscriptStatus == models.StatusCompleted {
+		return "/transcript/" + job.ID + "?format=txt"
+	}
+	return ""
+}
+
+func transcriptSRTURLForJob(job *models.ExtractionJob) string {
+	if job.TranscriptStatus == models.StatusCompleted {
+		return "/transcript/" + job.ID + "?format=srt"
 	}
 	return ""
 }
@@ -457,6 +660,12 @@ func (a *App) cleanup(ttl time.Duration) {
 		}
 		if job.OutputPath != "" {
 			_ = os.Remove(job.OutputPath)
+		}
+		if job.TranscriptTXTPath != "" {
+			_ = os.Remove(job.TranscriptTXTPath)
+		}
+		if job.TranscriptSRTPath != "" {
+			_ = os.Remove(job.TranscriptSRTPath)
 		}
 	}
 
