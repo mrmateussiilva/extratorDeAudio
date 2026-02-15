@@ -1,0 +1,104 @@
+:root {
+  --bg: #020617;
+  --panel: #0f172a;
+  --line: #1e293b;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --primary: #06b6d4;
+  --success: #10b981;
+  --danger: #ef4444;
+}
+
+body {
+  font-family: "Manrope", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background:
+    radial-gradient(circle at 85% 10%, rgba(6, 182, 212, 0.12), transparent 32%),
+    radial-gradient(circle at 15% 90%, rgba(16, 185, 129, 0.08), transparent 28%),
+    var(--bg);
+}
+
+.dropzone {
+  cursor: pointer;
+}
+
+.dropzone.active {
+  border-color: var(--primary);
+  background-color: rgba(6, 182, 212, 0.08);
+}
+
+.input-field {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #0b1220;
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.input-field:focus {
+  border-color: var(--primary);
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-success {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  border-radius: 0.75rem;
+  padding: 0.7rem 1.1rem;
+  transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #0891b2, #06b6d4);
+  color: white;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.btn-secondary {
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: #334155;
+  background: #111827;
+}
+
+.btn-success {
+  background: linear-gradient(135deg, #059669, #10b981);
+  color: white;
+}
+
+.progress-bar {
+  background: linear-gradient(90deg, #06b6d4, #10b981);
+  transition: width 0.35s ease;
+}
+
+.toast {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 50;
+  border-radius: 0.75rem;
+  border: 1px solid #334155;
+  background: #0b1220;
+  color: var(--text);
+  padding: 0.9rem 1rem;
+  box-shadow: 0 15px 35px rgba(2, 6, 23, 0.55);
+}
+
+.toast.success {
+  border-color: rgba(16, 185, 129, 0.55);
+}
+
+.toast.error {
+  border-color: rgba(239, 68, 68, 0.55);
+}

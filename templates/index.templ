@@ -1,0 +1,90 @@
+package templates
+
+import "extratorDeAudio/internal/models"
+
+templ IndexPage(recent []*models.ExtractionJob) {
+	<!doctype html>
+	<html lang="pt-BR">
+		<head>
+			<meta charset="UTF-8" />
+			<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+			<title>Audio Extractor</title>
+			<script src="https://cdn.tailwindcss.com"></script>
+			<link rel="stylesheet" href="/static/css/style.css" />
+		</head>
+		<body class="bg-slate-950 text-slate-100 min-h-screen">
+			<header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+				<div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+					<div>
+						<p class="text-cyan-400 text-sm font-semibold">Audio Extractor</p>
+						<h1 class="text-xl md:text-2xl font-bold">Extraia áudio de vídeos em segundos</h1>
+					</div>
+					<span class="text-xs text-slate-400">Go + templ + ffmpeg</span>
+				</div>
+			</header>
+
+			<main class="max-w-5xl mx-auto px-4 py-10 space-y-8">
+				<section class="rounded-2xl bg-slate-900 border border-slate-800 shadow-xl p-6 md:p-8">
+					<form id="uploadForm" class="space-y-6" method="post" action="/upload" enctype="multipart/form-data">
+						<div id="dropzone" class="dropzone rounded-xl border-2 border-dashed border-slate-700 bg-slate-950/60 p-10 text-center transition-all">
+							<p class="font-semibold text-lg">Arraste e solte o vídeo aqui</p>
+							<p class="text-slate-400 mt-2">ou clique para selecionar (máx. 500MB)</p>
+							<input id="video" type="file" name="video" class="hidden" accept="video/*" required />
+						</div>
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+							<label class="space-y-2">
+								<span class="text-sm text-slate-300">Formato de saída</span>
+								<select name="format" class="input-field" required>
+									<option value="mp3">MP3</option>
+									<option value="wav">WAV</option>
+									<option value="aac">AAC</option>
+									<option value="flac">FLAC</option>
+									<option value="ogg">OGG</option>
+								</select>
+							</label>
+							<label class="space-y-2">
+								<span class="text-sm text-slate-300">Qualidade</span>
+								<select name="quality" class="input-field" required>
+									<option value="low">Baixa</option>
+									<option value="medium" selected>Média</option>
+									<option value="high">Alta</option>
+									<option value="original">Original</option>
+								</select>
+							</label>
+						</div>
+						<button type="submit" class="btn-primary w-full md:w-auto">Extrair Áudio</button>
+					</form>
+				</section>
+
+				<section class="rounded-2xl bg-slate-900 border border-slate-800 shadow-xl p-6 md:p-8">
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="font-semibold text-lg">Extrações recentes</h2>
+						<a href="/" class="text-cyan-400 text-sm hover:text-cyan-300">Atualizar</a>
+					</div>
+					if len(recent) == 0 {
+						<p class="text-slate-400">Nenhuma extração recente.</p>
+					} else {
+						<div class="space-y-3">
+							for _, item := range recent {
+								<div class="rounded-lg border border-slate-800 bg-slate-950/40 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+									<div>
+										<p class="font-medium">{ item.InputFileName }</p>
+										<p class="text-sm text-slate-400">{ item.Format } | { item.Quality } | { string(item.Status) }</p>
+									</div>
+									if item.Status == models.StatusCompleted {
+										<a class="btn-secondary" href={ templ.SafeURL("/download/" + item.ID) }>Download</a>
+									} else {
+										<a class="btn-secondary" href={ templ.SafeURL("/job/" + item.ID) }>Abrir</a>
+									}
+								</div>
+							}
+						</div>
+					}
+				</section>
+			</main>
+
+			<div id="toast" class="toast hidden"></div>
+			<script src="/static/js/app.js"></script>
+		</body>
+	</html>
+}

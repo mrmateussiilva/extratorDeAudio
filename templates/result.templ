@@ -1,0 +1,13 @@
+package templates
+
+import "extratorDeAudio/internal/models"
+
+templ ResultSnippet(job *models.ExtractionJob) {
+	<div class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex flex-col md:flex-row gap-4 md:items-center md:justify-between">
+		<div>
+			<p class="font-semibold text-emerald-300">Arquivo pronto para download</p>
+			<p class="text-sm text-slate-300 mt-1">{ job.OutputName }</p>
+		</div>
+		<a class="btn-success" href={ templ.SafeURL("/download/" + job.ID) } id="download-link">Baixar áudio</a>
+	</div>
+}
