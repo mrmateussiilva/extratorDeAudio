@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  audio-extractor:
+    build: .
+    container_name: audio-extractor
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+    environment:
+      - APP_ADDR=:8080
+      - MAX_UPLOAD_BYTES=524288000
+    restart: unless-stopped

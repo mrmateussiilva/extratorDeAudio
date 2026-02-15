@@ -1,0 +1,8 @@
+/bin
+/tmp
+uploads/*
+outputs/*
+!uploads/.gitkeep
+!outputs/.gitkeep
+*.log
+.DS_Store
