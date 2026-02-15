@@ -1,6 +1,6 @@
-# Audio Extractor (Go + templ + ffmpeg)
+# Audio Extractor (Go + templ + ffmpeg + whisper.cpp)
 
-Aplicação web em Go para extrair áudio de vídeos com processamento assíncrono via `ffmpeg`, interface moderna com Tailwind e atualização de progresso em tempo real por WebSocket.
+Aplicação web em Go para extrair áudio de vídeos com processamento assíncrono via `ffmpeg` e transcrever áudio localmente com `whisper.cpp`, com interface moderna em Tailwind e progresso em tempo real por WebSocket.
 
 ## Stack
 
@@ -9,6 +9,7 @@ Aplicação web em Go para extrair áudio de vídeos com processamento assíncro
 - chi router
 - gorilla/websocket
 - ffmpeg
+- whisper.cpp (local, sem API externa)
 - Docker + Docker Compose
 
 ## Funcionalidades
@@ -20,6 +21,7 @@ Aplicação web em Go para extrair áudio de vídeos com processamento assíncro
 - Processamento assíncrono
 - Barra de progresso em tempo real (WebSocket)
 - Download automático ao concluir
+- Transcrição local de áudio para texto (`.txt`) e legenda (`.srt`)
 - Lista de extrações recentes
 - Endpoint de health check (`/healthz`)
 - Graceful shutdown
@@ -95,7 +97,7 @@ audio-extractor/
 | [#########################.................] 62%              |
 | extraindo áudio                                               |
 |                                                              |
-| (ao concluir: download automático + botão Baixar áudio)      |
+| (ao concluir: download + botão Transcrever em texto)         |
 +-------------------------------------------------------------+
 ```
 
@@ -106,6 +108,8 @@ audio-extractor/
 - `GET /job/{id}` página de progresso do job
 - `GET /extract/{id}` inicia extração assíncrona
 - `GET /download/{id}` download do áudio pronto
+- `GET /transcribe/{id}` inicia transcrição local assíncrona
+- `GET /transcript/{id}?format=txt|srt` download da transcrição
 - `GET /ws/{id}` progresso em tempo real via WebSocket
 - `GET /healthz` health check
 
@@ -114,6 +118,7 @@ audio-extractor/
 Pré-requisitos:
 - Go 1.22+
 - ffmpeg e ffprobe instalados no sistema
+- whisper.cpp (`whisper-cli`) + modelo local (`ggml-base.bin`)
 
 ```bash
 make run
@@ -153,6 +158,9 @@ make templ        # gera templates com templ (opcional)
 - `UPLOADS_DIR` (default `uploads`)
 - `OUTPUTS_DIR` (default `outputs`)
 - `MAX_UPLOAD_BYTES` (default `524288000` = 500MB)
+- `WHISPER_BIN` (default `whisper-cli` local ou `/app/whisper/whisper-cli` no Docker)
+- `WHISPER_MODEL` (default `/app/whisper/models/ggml-base.bin`)
+- `WHISPER_LANGUAGE` (default `auto`)
 
 ## Fluxo interno
 
@@ -162,6 +170,7 @@ make templ        # gera templates com templ (opcional)
 4. Backend executa `ffmpeg` assíncrono.
 5. Progresso é enviado por WebSocket (`/ws/{id}`).
 6. Ao concluir, frontend inicia download automático (`/download/{id}`).
+7. Usuário pode iniciar transcrição local (`/transcribe/{id}`) e baixar `.txt`/`.srt`.
 
 ## Observações de produção
 
