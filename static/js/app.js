@@ -143,10 +143,11 @@
 
     const renderTranscriptActions = (txtURL, srtURL) => {
       if (!resultSlot || (!txtURL && !srtURL)) return;
+      if (document.getElementById("transcript-ready-card")) return;
       const pending = document.getElementById("transcription-pending-card");
       if (pending) pending.remove();
       resultSlot.innerHTML += `
-        <div class="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mt-3">
+        <div id="transcript-ready-card" class="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 mt-3">
           <p class="font-semibold text-cyan-300">Transcrição concluída</p>
           <p class="text-sm text-slate-300 mt-1 mb-3">Baixe o conteúdo da transcrição no formato desejado.</p>
           <div class="flex gap-2">
@@ -157,9 +158,60 @@
       `;
     };
 
+    const applyJobSnapshot = (data) => {
+      const extractionStatus = data.status;
+      const extractionProgress = Number(data.progress || 0);
+      const transcriptStatus = data.transcript_status;
+      const transcriptProgress = Number(data.transcript_progress || 0);
+
+      if (extractionStatus === "failed") {
+        updateProgress(0, data.error || "Falha na extração");
+        return;
+      }
+
+      if (extractionStatus === "completed") {
+        updateProgress(100, "Extração concluída");
+        renderExtractionActions(data.download_url);
+      } else if (extractionStatus === "processing" || extractionStatus === "queued") {
+        updateProgress(extractionProgress, "Extraindo áudio...");
+      }
+
+      if (transcriptStatus === "queued" || transcriptStatus === "processing") {
+        showTranscriptionPendingCard();
+        updateProgress(transcriptProgress, "Transcrevendo áudio...");
+      }
+
+      if (transcriptStatus === "failed") {
+        updateProgress(0, data.transcript_error || "Falha na transcrição");
+      }
+
+      if (transcriptStatus === "completed") {
+        updateProgress(100, "Transcrição concluída");
+        renderTranscriptActions(data.transcript_txt_url, data.transcript_srt_url);
+      }
+    };
+
+    const startPolling = () => {
+      const tick = async () => {
+        try {
+          const res = await fetch(`/api/job/${jobID}`, { cache: "no-store" });
+          if (!res.ok) return;
+          const data = await res.json();
+          applyJobSnapshot(data);
+        } catch {
+          // fallback silencioso; websocket segue tentando entregar eventos.
+        }
+      };
+
+      tick();
+      return setInterval(tick, 2000);
+    };
+
     fetch(`/extract/${jobID}`, { method: "GET" }).catch(() => {
       showToast("Não foi possível iniciar a extração", "error");
     });
+
+    const pollTimer = startPolling();
 
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${protocol}://${location.host}/ws/${jobID}`);
@@ -209,9 +261,10 @@
     };
 
     ws.onclose = () => {
-      // Mantém a UI informando que a conexão caiu para evitar sensação de inação.
-      showToast("Canal de progresso encerrado", "error");
+      showToast("Canal de progresso encerrado, usando atualização automática", "error");
     };
+
+    window.addEventListener("beforeunload", () => clearInterval(pollTimer));
   };
 
   setupDropzone();

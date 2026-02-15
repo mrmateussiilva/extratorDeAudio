@@ -84,6 +84,7 @@ func (a *App) registerRoutes() {
 	a.router.Get("/", a.index)
 	a.router.Post("/upload", a.upload)
 	a.router.Get("/job/{id}", a.jobPage)
+	a.router.Get("/api/job/{id}", a.jobStatus)
 	a.router.Get("/extract/{id}", a.startExtraction)
 	a.router.Get("/transcribe/{id}", a.startTranscription)
 	a.router.Get("/download/{id}", a.download)
@@ -113,6 +114,29 @@ func (a *App) jobPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.render(w, r, templates.UploadPage(job, a.recentJobs(10)))
+}
+
+func (a *App) jobStatus(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+	job, ok := a.getJob(jobID)
+	if !ok {
+		http.Error(w, "job não encontrado", http.StatusNotFound)
+		return
+	}
+
+	a.respondJSON(w, http.StatusOK, map[string]any{
+		"id":                   job.ID,
+		"status":               job.Status,
+		"progress":             job.Progress,
+		"error":                job.Error,
+		"download_url":         downloadURLForJob(job),
+		"transcript_status":    job.TranscriptStatus,
+		"transcript_progress":  job.TranscriptProgress,
+		"transcript_error":     job.TranscriptError,
+		"transcript_txt_url":   transcriptTXTURLForJob(job),
+		"transcript_srt_url":   transcriptSRTURLForJob(job),
+		"updated_at":           job.UpdatedAt.Format(time.RFC3339),
+	})
 }
 
 func (a *App) upload(w http.ResponseWriter, r *http.Request) {
